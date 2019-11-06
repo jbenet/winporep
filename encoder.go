@@ -15,7 +15,13 @@ type Encoder struct {
 	Data     io.ReadSeeker
 	Replica  io.WriteSeeker
 
-	drgs []*WinDrg
+	drgs []*WinDrg // lazily constructed
+}
+
+// WinDrg is a handle to a DRG that keeps a window number with it.
+type WinDrg struct {
+	win int
+	drg *DRG
 }
 
 func NewEncoder(p Params, seed []byte, datasize int, Data io.ReadSeeker, Replica io.WriteSeeker) *Encoder {
@@ -28,11 +34,63 @@ func NewEncoder(p Params, seed []byte, datasize int, Data io.ReadSeeker, Replica
 	}
 }
 
-type WinDrg struct {
-	win int
-	drg *DRG
+func (e *Encoder) EncodeFull() error {
+	return e.Encode(0, e.NumNodes())
 }
 
+func (e *Encoder) Encode(start, end int) error {
+	if start < 0 {
+		return errors.New("invalid start")
+	}
+	if end > e.NumNodes() {
+		return errors.New("end is beyond data size")
+	}
+	if start > end {
+		return errors.New("start is beyond end")
+	}
+	if start == end {
+		return nil // noop
+	}
+
+	windows := e.NumWindows()
+	winsize := e.Params.WindowSize
+	winstart := start / winsize
+	next := start
+	for w := winstart; w < windows; w++ {
+		log.Printf("Encode window idx: %d/%d/%d - win: %d/%d", start, next, end, w, windows)
+		if next >= end {
+			break
+		}
+
+		// this grabs the k drgs relevant to this window (staggered, usually just 2)
+		// (may cause them to be constructed if they haven't been accessed before)
+		drgs, err := e.WindowDRGs(w)
+		if err != nil {
+			return err
+		}
+
+		winEnd := (w + 1) * winsize
+		if winEnd > end {
+			// if window end is greater than whole data end, use data end
+			winEnd = end
+		}
+		// main loop, advances the encoder
+		for ; next < winEnd; next++ {
+			if next%winsize == 0 { // keynode
+				_, err = encodeKeyNode(next, w, e.Seed, e.Data, e.Replica)
+			} else {
+				_, err = encodeDataNode(next, w, windows, winsize, drgs, e.Data, e.Replica)
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Get the DRG for a given index. Most of the time it will be cached.
+// On the rare case it is the first access, will construct the DRG object.
 func (e *Encoder) DRG(window int) (*WinDrg, error) {
 	if e.drgs == nil {
 		e.drgs = make([]*WinDrg, e.NumWindows())
@@ -70,57 +128,6 @@ func (e *Encoder) DataNode(index int) ([]byte, error) {
 	buf := make([]byte, NodeSize)
 	_, err = e.Data.Read(buf)
 	return buf, err
-}
-
-func (e *Encoder) EncodeFull() error {
-	return e.Encode(0, e.NumNodes())
-}
-
-func (e *Encoder) Encode(start, end int) error {
-	if start < 0 {
-		return errors.New("invalid start")
-	}
-	if end > e.NumNodes() {
-		return errors.New("end is beyond data size")
-	}
-	if start > end {
-		return errors.New("start is beyond end")
-	}
-	if start == end {
-		return nil // noop
-	}
-
-	windows := e.NumWindows()
-	winsize := e.Params.WindowSize
-	winstart := start / winsize
-	next := start
-	for w := winstart; w < windows; w++ {
-		log.Printf("Encode window idx: %d/%d/%d - win: %d/%d", start, next, end, w, windows)
-		if next >= end {
-			break
-		}
-
-		drgs, err := e.WindowDRGs(w)
-		if err != nil {
-			return err
-		}
-
-		winEnd := (w + 1) * winsize
-		if winEnd > end {
-			winEnd = end
-		}
-		for ; next < winEnd; next++ {
-			if next%winsize == 0 { // keynode
-				_, err = encodeKeyNode(next, w, e.Seed, e.Data, e.Replica)
-			} else {
-				_, err = encodeDataNode(next, w, windows, winsize, drgs, e.Data, e.Replica)
-			}
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (e *Encoder) WindowDRGs(window int) ([]*WinDrg, error) {
