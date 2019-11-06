@@ -23,6 +23,27 @@ type ArgOpts struct {
 	WinParams winporep.Params
 }
 
+const Usage = `SYNOPSIS
+	%s - implementation of WinPoRep
+
+OPTIONS
+	-h, --help          show this help message
+	-v                  show debugging output
+	--seed <string>     set a seed for the porep
+	--winsize <int>     set the window size parameter
+	--parents <int>     set the DRG parents parameter
+	--stagger <int>     set the DRG stagger parameter
+
+EXAMPLES
+	# encode it
+	winporep largefile largefile.rep
+
+	# decode it
+	winporep largefile.rep largefile2
+
+	WARNING: hacky and untested. may eat your files.
+`
+
 func parseArgs() (ArgOpts, error) {
 	a := ArgOpts{}
 	a.WinParams = winporep.DefaultParams
@@ -33,6 +54,11 @@ func parseArgs() (ArgOpts, error) {
 	flag.IntVar(&a.WinParams.WindowSize, "winsize", a.WinParams.WindowSize, "window size")
 	flag.IntVar(&a.WinParams.DRGParents, "parents", a.WinParams.DRGParents, "DRG Parents")
 	flag.IntVar(&a.WinParams.DRGStagger, "stagger", a.WinParams.DRGStagger, "DRG Stagger")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stdout, Usage, os.Args[0])
+		os.Exit(0)
+	}
 
 	flag.Parse()
 
