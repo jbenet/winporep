@@ -6,15 +6,15 @@ import (
 )
 
 type Params struct {
-	DRGParents int
 	WindowSize int
-	Stagger    int
+	DRGParents int
+	DRGStagger int
 }
 
 var DefaultParams = Params{
-	DRGParents: 2,
 	WindowSize: 1 << 14,
-	Stagger:    2,
+	DRGParents: 2,
+	DRGStagger: 2,
 }
 
 func EncodeFull(seed []byte, dataSize int, Data io.ReadSeeker, Replica io.WriteSeeker) error {
@@ -23,25 +23,32 @@ func EncodeFull(seed []byte, dataSize int, Data io.ReadSeeker, Replica io.WriteS
 }
 
 func EncodeFiles(seed []byte, Data, Replica string) error {
+	_, err := EncodeFilesRet(seed, DefaultParams, Data, Replica)
+	return err
+}
+
+func EncodeFilesRet(seed []byte, p Params, Data, Replica string) (*Encoder, error) {
 
 	df, err := os.Open(Data)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer df.Close()
 
 	rf, err := os.OpenFile(Replica, os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rf.Close()
 
 	dfi, err := df.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	dataSize := int(dfi.Size())
 
-	return EncodeFull(seed, dataSize, df, rf)
+	e := NewEncoder(p, seed, dataSize, df, rf)
+	err = e.EncodeFull()
+	return e, err
 }

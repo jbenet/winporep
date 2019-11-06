@@ -1,9 +1,9 @@
 package winporep
 
 import (
-	"crypto/sha256"
 	"errors"
 	"io"
+	"log"
 )
 
 const NodeSize = 32
@@ -48,8 +48,8 @@ func (e *Encoder) DRG(window int) (*WinDrg, error) {
 		return nil, err
 	}
 
-	seed := Hash(e.Seed, wn)
-	drgSize := e.Params.WindowSize * e.Params.Stagger
+	seed := Hash(nil, e.Seed, wn)
+	drgSize := e.Params.WindowSize * e.Params.DRGStagger
 	drg := NewDRG(drgSize, e.Params.DRGParents, seed)
 
 	drgh := &WinDrg{window, drg}
@@ -62,8 +62,7 @@ func (e *Encoder) Window(index int) int {
 }
 
 func (e *Encoder) DataNode(index int) ([]byte, error) {
-	i := index * NodeSize
-	_, err := e.Data.Seek(int64(i), io.SeekStart)
+	err := SeekNode(e.Data, index)
 	if err != nil {
 		return nil, err
 	}
@@ -74,14 +73,14 @@ func (e *Encoder) DataNode(index int) ([]byte, error) {
 }
 
 func (e *Encoder) EncodeFull() error {
-	return e.Encode(0, e.DataSize)
+	return e.Encode(0, e.NumNodes())
 }
 
 func (e *Encoder) Encode(start, end int) error {
 	if start < 0 {
 		return errors.New("invalid start")
 	}
-	if end > e.DataSize {
+	if end > e.NumNodes() {
 		return errors.New("end is beyond data size")
 	}
 	if start > end {
@@ -96,6 +95,7 @@ func (e *Encoder) Encode(start, end int) error {
 	winstart := start / winsize
 	next := start
 	for w := winstart; w < windows; w++ {
+		log.Printf("Encode window idx: %d/%d/%d - win: %d/%d", start, next, end, w, windows)
 		if next >= end {
 			break
 		}
@@ -125,11 +125,11 @@ func (e *Encoder) Encode(start, end int) error {
 
 func (e *Encoder) WindowDRGs(window int) ([]*WinDrg, error) {
 	var err error
-	drgs := make([]*WinDrg, e.Params.Stagger) // usually just 2
+	drgs := make([]*WinDrg, e.Params.DRGStagger) // usually just 2
 
 	nw := e.NumWindows()
-	for s := 0; s < e.Params.Stagger; s++ {
-		di := (window - s) % nw
+	for s := 0; s < e.Params.DRGStagger; s++ {
+		di := (window - s + nw) % nw
 		drgs[s], err = e.DRG(di)
 		if err != nil {
 			return nil, err
@@ -138,37 +138,23 @@ func (e *Encoder) WindowDRGs(window int) ([]*WinDrg, error) {
 	return drgs, nil
 }
 
+func (e *Encoder) NumNodes() int {
+	return e.DataSize / NodeSize
+}
+
 func (e *Encoder) NumWindows() int {
-	windows := e.DataSize / e.Params.WindowSize
-	if e.DataSize > (windows * e.Params.WindowSize) {
+	nn := e.NumNodes()
+	windows := nn / e.Params.WindowSize
+	if nn > (windows * e.Params.WindowSize) {
 		windows++ // partial last window
 	}
 	return windows
 }
 
-func Hash(vals ...[]byte) []byte {
-	h := sha256.New()
-	for _, v := range vals {
-		h.Write(v)
-	}
-	return h.Sum(nil)
-}
-
-// n needs to be smaller or equal than the length of a and b.
-func safeXORBytes(dst, a, b []byte, n int) {
-	for i := 0; i < n; i++ {
-		dst[i] = a[i] ^ b[i]
-	}
-}
-
-func XOR(dst []byte, vals ...[]byte) {
-	for _, v := range vals {
-		safeXORBytes(dst, dst, v, len(v))
-	}
-}
-
 func encodeKeyNode(index, win int, seed []byte, Data io.ReadSeeker, Rep io.WriteSeeker) ([]byte, error) {
-	_, err := Data.Seek(int64(index), io.SeekStart)
+	log.Print("encodeKeyNode ", index, win)
+
+	err := SeekNode(Data, index)
 	if err != nil {
 		return nil, err
 	}
@@ -181,10 +167,10 @@ func encodeKeyNode(index, win int, seed []byte, Data io.ReadSeeker, Rep io.Write
 
 	// // hash
 	// wb := []byte(strconv.Itoa(31415926))
-	// h := Hash(seed, wb, d)
+	// h := Hash(nil, d, seed, wb)
 	h := d // for now, just use the keyNode as is. easier decoding
 
-	_, err = Rep.Seek(int64(index), io.SeekStart)
+	err = SeekNode(Rep, index)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +179,11 @@ func encodeKeyNode(index, win int, seed []byte, Data io.ReadSeeker, Rep io.Write
 }
 
 func encodeDataNode(index, win, windows, winsize int, drgs []*WinDrg, Data io.ReadSeeker, Rep io.WriteSeeker) ([]byte, error) {
-	_, err := Data.Seek(int64(index), io.SeekStart)
+	if index%4096 == 0 {
+		log.Print("encodeDataNode ", index, win, windows, winsize, len(drgs))
+	}
+
+	err := SeekNode(Data, index)
 	if err != nil {
 		return nil, err
 	}
@@ -205,12 +195,15 @@ func encodeDataNode(index, win, windows, winsize int, drgs []*WinDrg, Data io.Re
 	}
 
 	for _, drg := range drgs {
-		i := drgIndex(index, drg.win, windows, winsize)
-		nd := drg.drg.Node(i)
+		didx := drgIndex(index, drg.win, windows, winsize)
+		nd := drg.drg.Node(didx)
+		// if index%4096 == 0 {
+		// 	log.Printf("encodeDataNode drg %d %d %x", i, didx, nd)
+		// }
 		XOR(d, nd)
 	}
 
-	_, err = Rep.Seek(int64(index), io.SeekStart)
+	err = SeekNode(Rep, index)
 	if err != nil {
 		return nil, err
 	}
@@ -249,4 +242,9 @@ func drgIndex(dataIndex, drgWin, windows, winsize int) int {
 
 	drgIndex := (offset * winsize) + dataWinIndex
 	return drgIndex
+}
+
+func SeekNode(s io.Seeker, n int) error {
+	_, err := s.Seek(int64(n)*NodeSize, io.SeekStart)
+	return err
 }

@@ -1,7 +1,6 @@
 package winporep
 
 import (
-	"crypto/sha256"
 	"math/rand"
 )
 
@@ -76,16 +75,16 @@ func (d *DRG) NodeParents(index int) []int {
 }
 
 func (d *DRG) hashNodes(nodes []int, buf []byte) {
-	h := sha256.New()
 
+	var vals [][]byte
 	if len(nodes) < 1 {
 		// if no parents, use the seed
-		h.Write(d.seed)
+		vals = append(vals, d.seed)
 	} else {
 		for _, i := range nodes {
-			h.Write(d.Node(i))
+			vals = append(vals, d.Node(i))
 		}
 	}
 
-	h.Sum(buf)
+	Hash(buf, vals...)
 }
