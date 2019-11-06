@@ -30,3 +30,5 @@ EXAMPLES
 
   WARNING: hacky and untested. may eat your files.
 ```
+
+![](./winporep.png)
