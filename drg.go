@@ -7,7 +7,7 @@ import (
 
 type Node [32]byte
 
-const NodeSize = 32
+const DRGNodeSize = 32
 
 type DRG struct {
 	size    int // number of nodes
@@ -22,7 +22,7 @@ func NewDRG(size int, parents int, seed []byte) *DRG {
 		size:    size,
 		parents: parents,
 		seed:    seed,
-		data:    make([]byte, size*NodeSize),
+		data:    make([]byte, size*DRGNodeSize),
 		gen:     make([]bool, size),
 	}
 }
@@ -40,7 +40,7 @@ func (d *DRG) nodeSlice(index int) []byte {
 		panic("node slice out of bounds")
 	}
 
-	return d.data[index*NodeSize : (index+1)*NodeSize]
+	return d.data[index*DRGNodeSize : (index+1)*DRGNodeSize]
 }
 
 func (d *DRG) Node(index int) []byte {
