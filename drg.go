@@ -86,5 +86,12 @@ func (d *DRG) hashNodes(nodes []int, buf []byte) {
 		}
 	}
 
-	Hash(buf, vals...)
+	// FIXME: `Hash()` does *not* work in-place, the underlying `sha256`
+	//  implementation `append`s to the input byte stream (see
+	//  `sha256.digest.Sum()`). Disturbingly, Go allows then to write to
+	//  the underlying `DRG.data` memory beyond the `buf` limit (determined
+	//  by `nodeSlice`). This is a *sub-optimal* workaround.
+	tmp := make([]byte, 0, DRGNodeSize)
+	Hash(tmp, vals...)
+	copy(buf, tmp[:DRGNodeSize])
 }
